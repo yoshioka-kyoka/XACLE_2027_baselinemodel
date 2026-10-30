@@ -79,19 +79,26 @@ backboneが固まった後に重ねる。
 
 ## 6. Stage 0 / Stage 1 実施結果 (2026-10-30)
 
-### Stage 0: LOSO評価ハーネス
+### Stage 0: LOSO評価ハーネス(全8世代完了)
 
-`scripts/make_loso_splits.py` / `scripts/run_loso_sweep.py` を実装（既存の`train.py`/`inference.py`/`evaluate.py`は無変更、`inference.py`に`train`split選択肢を1行追加したのみ）。M2D-CLAP baselineでのLOSO(Leave-One-Synthesizer-Out)中間結果:
+`scripts/make_loso_splits.py` / `scripts/run_loso_sweep.py` を実装（既存の`train.py`/`inference.py`/`evaluate.py`は無変更、`inference.py`に`train`split選択肢を1行追加したのみ）。M2D-CLAP baselineでのLOSO(Leave-One-Synthesizer-Out)結果、SRCC昇順:
 
 | 除外generator | SRCC (heldout) | N |
 |---|---:|---:|
-| audiogen | 0.5641 | 750 |
-| audioldm | 0.5240 | 500 |
-| audioldm2 | 0.6327 | 500 |
+| tangoflux | 0.2579 | 750 |
+| tango2 | 0.3808 | 500 |
+| tango | 0.4754 | 500 |
 | make-an-audio2 | 0.4781 | 750 |
-| (残り4世代は実行中) | | |
+| audioldm | 0.5240 | 500 |
+| stable_audio | 0.5332 | 750 |
+| audiogen | 0.5641 | 750 |
+| audioldm2 | 0.6327 | 500 |
 
-official validation SRCC(0.5844)と同程度〜上回るものもあれば、make-an-audio2のように明確に下回るものもある。generatorによって汎化の崩れ方が異なることが分かった。全8世代完了後に平均・最悪ケースをまとめる。
+**8世代の平均SRCC = 0.4808**。official validation SRCC(同一generator分布内、0.5844)と比べて約0.10低い。これは「未知generatorへの汎化」で実際に性能が落ちることを示す、train内だけで測れた初めての具体的な数字。
+
+**tangoファミリー(tango/tango2/tangoflux)が揃って下位3つ**(0.2579/0.3808/0.4754)。他の5世代(0.48〜0.63)と明確に分かれている。tango系は音色・生成アーティファクトが他の生成モデル群と質的に異なり、それらを除外して学習すると特に汎化しにくい可能性がある。tangofluxはMSEは最も低い(2.92、8世代中最良)のにSRCCは最悪 → 絶対値としては平均的なスコアに収束しているが、サンプル間の相対順序を全く当てられていない(出力が潰れている)ことを示唆する。2027の評価データが同系統の未知generatorを含む場合、この弱点がそのまま露出するリスクがある。
+
+この結果はCSB案(generator-adversarial, latent swap)が対処しようとしている問題そのものの実証的裏付けになっている。
 
 ### Stage 1: encoder差し替えの汎用化 + Qwen2.5-Omni-3B 初回結果
 
