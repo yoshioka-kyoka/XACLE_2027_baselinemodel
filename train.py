@@ -9,7 +9,7 @@ import torch
 from scipy.stats import spearmanr
 from torch.utils.data import DataLoader
 
-from datasets.xacle_baseline_dataset import get_dataset
+from datasets.xacle_baseline_dataset import get_cached_embedding_dataset, get_dataset
 from losses.loss_function import get_loss_function
 from models.xacle_baseline_model import XACLEBaselineModel
 from utils.checkpoint import save_trainable_checkpoint
@@ -19,19 +19,29 @@ from utils.utils import Logger, json_dump, move_to_device
 
 
 def build_dataloaders(cfg):
-    sample_rate = cfg["m2d_clap"]["sample_rate"]
-    train_dataset = get_dataset(
-        cfg["train_list"],
-        os.path.join(cfg["wav_dir"], "train"),
-        max_sec=cfg["max_len"],
-        sr=sample_rate,
-    )
-    validation_dataset = get_dataset(
-        cfg["validation_list"],
-        os.path.join(cfg["wav_dir"], "validation"),
-        max_sec=cfg["max_len"],
-        sr=sample_rate,
-    )
+    encoder_type = cfg.get("encoder_type", "m2d_clap")
+    if encoder_type == "m2d_clap":
+        sample_rate = cfg["m2d_clap"]["sample_rate"]
+        train_dataset = get_dataset(
+            cfg["train_list"],
+            os.path.join(cfg["wav_dir"], "train"),
+            max_sec=cfg["max_len"],
+            sr=sample_rate,
+        )
+        validation_dataset = get_dataset(
+            cfg["validation_list"],
+            os.path.join(cfg["wav_dir"], "validation"),
+            max_sec=cfg["max_len"],
+            sr=sample_rate,
+        )
+    elif encoder_type == "cached_embedding":
+        embed_cfg = cfg["cached_embedding"]
+        train_dataset = get_cached_embedding_dataset(cfg["train_list"], embed_cfg["train_embeddings"])
+        validation_dataset = get_cached_embedding_dataset(
+            cfg["validation_list"], embed_cfg["validation_embeddings"]
+        )
+    else:
+        raise ValueError(f"Unknown encoder_type: {encoder_type!r}")
 
     generator = torch.Generator().manual_seed(cfg["seed"])
     common = {

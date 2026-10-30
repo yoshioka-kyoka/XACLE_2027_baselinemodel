@@ -3,7 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from models.xacle_baseline_model import XACLEBaselineModel
-from datasets.xacle_baseline_dataset import get_infdataset
+from datasets.xacle_baseline_dataset import get_cached_embedding_infdataset, get_infdataset
 import utils.utils as utils
 from utils.checkpoint import load_trainable_checkpoint
 from utils.config import load_config
@@ -15,7 +15,9 @@ def inference():
     # -------- initial setup --------
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint_directory")
-    parser.add_argument("dataset", nargs="?", choices=["validation", "test"], default="validation")
+    parser.add_argument(
+        "dataset", nargs="?", choices=["validation", "test", "train"], default="validation"
+    )
     parser.add_argument(
         "--metadata-list",
         help="Override the metadata CSV while retaining the selected WAV split",
@@ -42,21 +44,29 @@ def inference():
     seed_everything(cfg["seed"])
     dataset_label   = f"{dataset_key}_list"
     dataset_list    = args.metadata_list or cfg[dataset_label]
-    dataset_wav_dir = os.path.join(cfg["wav_dir"], dataset_key)
+    encoder_type    = cfg.get("encoder_type", "m2d_clap")
     print("Perform inference on the following dataset with following checkpoint.")
     print(f"\tchkpt:        {chkpt_path}")
     print(f"\tdata list:    {dataset_list}")
-    print(f"\twav dir:      {dataset_wav_dir}") 
     device = torch.device(cfg["device"])
     # -------------------------------
 
     # -------- dataset / dataloader --------
-    test_ds   = get_infdataset(
-        txt_file_path=dataset_list,
-        wav_dir=dataset_wav_dir,
-        max_sec=cfg["max_len"],
-        sr=cfg["m2d_clap"]["sample_rate"]
-    )
+    if encoder_type == "m2d_clap":
+        dataset_wav_dir = os.path.join(cfg["wav_dir"], dataset_key)
+        print(f"\twav dir:      {dataset_wav_dir}")
+        test_ds = get_infdataset(
+            txt_file_path=dataset_list,
+            wav_dir=dataset_wav_dir,
+            max_sec=cfg["max_len"],
+            sr=cfg["m2d_clap"]["sample_rate"]
+        )
+    elif encoder_type == "cached_embedding":
+        embeddings_path = cfg["cached_embedding"][f"{dataset_key}_embeddings"]
+        print(f"\tembeddings:   {embeddings_path}")
+        test_ds = get_cached_embedding_infdataset(txt_file_path=dataset_list, embeddings_path=embeddings_path)
+    else:
+        parser.error(f"Unknown encoder_type: {encoder_type!r}")
     test_loader = DataLoader(
         test_ds,
         batch_size=cfg.get("inference_batch_size", cfg.get("val_batch_size", 1)),

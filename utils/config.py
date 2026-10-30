@@ -8,7 +8,6 @@ REQUIRED_TOP_LEVEL_KEYS = {
     "train_list",
     "validation_list",
     "test_list",
-    "wav_dir",
     "output_dir",
     "batch_size",
     "val_batch_size",
@@ -20,8 +19,15 @@ REQUIRED_TOP_LEVEL_KEYS = {
     "device",
     "seed",
     "loss",
-    "m2d_clap",
     "model",
+}
+
+# Keys required in addition to REQUIRED_TOP_LEVEL_KEYS, depending on
+# `encoder_type` (docs/strategy.md, Stage 1: swap the encoder, keep everything
+# else -- loss/dataset/training-loop -- unchanged).
+ENCODER_TYPE_REQUIRED_KEYS = {
+    "m2d_clap": {"wav_dir", "m2d_clap"},
+    "cached_embedding": {"cached_embedding"},
 }
 
 
@@ -35,7 +41,11 @@ def load_config(config_path="configs/train.json"):
 
 
 def validate_config(cfg):
-    missing = sorted(REQUIRED_TOP_LEVEL_KEYS - cfg.keys())
+    encoder_type = cfg.get("encoder_type", "m2d_clap")
+    if encoder_type not in ENCODER_TYPE_REQUIRED_KEYS:
+        raise ValueError(f"Unknown encoder_type: {encoder_type!r}")
+    required = REQUIRED_TOP_LEVEL_KEYS | ENCODER_TYPE_REQUIRED_KEYS[encoder_type]
+    missing = sorted(required - cfg.keys())
     if missing:
         raise ValueError(f"Missing required config keys: {', '.join(missing)}")
 
@@ -46,10 +56,14 @@ def validate_config(cfg):
         raise ValueError("num_workers must be a non-negative integer")
     if cfg["lr"] <= 0:
         raise ValueError("lr must be positive")
-    if cfg["m2d_clap"].get("sample_rate") != 16000:
-        raise ValueError("The selected M2D-CLAP checkpoint requires 16 kHz audio")
-    if cfg["m2d_clap"].get("embedding_dim") != 768:
-        raise ValueError("The selected M2D-CLAP checkpoint produces 768-dimensional embeddings")
+    if encoder_type == "m2d_clap":
+        if cfg["m2d_clap"].get("sample_rate") != 16000:
+            raise ValueError("The selected M2D-CLAP checkpoint requires 16 kHz audio")
+        if cfg["m2d_clap"].get("embedding_dim") != 768:
+            raise ValueError("The selected M2D-CLAP checkpoint produces 768-dimensional embeddings")
+    elif encoder_type == "cached_embedding":
+        if not cfg["cached_embedding"].get("embedding_dim"):
+            raise ValueError("cached_embedding.embedding_dim is required")
     for key in ("max_train_batches", "max_val_batches", "max_inference_batches"):
         if key in cfg and (not isinstance(cfg[key], int) or cfg[key] <= 0):
             raise ValueError(f"{key} must be a positive integer when specified")

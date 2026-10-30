@@ -14,4 +14,8 @@ hf_cache/
 chkpt/
 chkpt_smoke/
 chkpt_cd/
+chkpt_loso/
 release/
+
+# Cached frozen-encoder embeddings (scripts/extract_*_embeddings.py); regenerable.
+embeddings/

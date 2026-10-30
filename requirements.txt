@@ -7,3 +7,9 @@ SoundFile==0.14.0
 timm==1.0.28
 tqdm==4.70.0
 transformers==4.57.6
+
+# Stage 1 (docs/strategy.md): scripts/extract_qwen_omni_embeddings.py only.
+# Not required for the original M2D-CLAP encoder_type="m2d_clap" path.
+audioread==3.1.0
+qwen-omni-utils==0.0.9
+librosa==1.0.0

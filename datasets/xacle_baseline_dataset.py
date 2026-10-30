@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import Dataset
+import numpy as np
 import pandas as pd
 import os
 import soundfile as sf
@@ -10,6 +11,12 @@ def get_dataset(txt_file_path, wav_dir, max_sec, sr, org_max=10.0, org_min=0.0):
 
 def get_infdataset(txt_file_path, wav_dir, max_sec, sr):
     return XACLEINFDataset(txt_file_path, wav_dir, max_sec, sr)
+
+def get_cached_embedding_dataset(txt_file_path, embeddings_path, org_max=10.0, org_min=0.0):
+    return XACLECachedEmbeddingDataset(txt_file_path, embeddings_path, org_max, org_min)
+
+def get_cached_embedding_infdataset(txt_file_path, embeddings_path):
+    return XACLECachedEmbeddingINFDataset(txt_file_path, embeddings_path)
 
 from torch.nn.functional import pad as pad1d 
 
@@ -147,4 +154,94 @@ class XACLEINFDataset(Dataset):
             wavs            = wav_batch,
             captions        = captions,
             wav_paths       = [b["wav_path"] for b in batch]
+        )
+
+
+def _load_embedding_lookup(embeddings_path):
+    """Load a scripts/extract_*_embeddings.py .npz into a {wav_file_name: vector} dict."""
+    data = np.load(embeddings_path, allow_pickle=True)
+    names = data["wav_file_name"]
+    embeddings = data["embedding"]
+    return dict(zip(names.tolist(), embeddings))
+
+
+class XACLECachedEmbeddingDataset(Dataset):
+    """Training dataset for a frozen backbone's precomputed joint embeddings.
+
+    Stage 1 (docs/strategy.md): swap only the encoder, keep the normalization,
+    class-balance bucketing, loss, and training loop identical to XACLEDataset.
+    Used when a backbone (e.g. Qwen-Omni) is too large to re-run every epoch,
+    so its embeddings are extracted once (scripts/extract_qwen_omni_embeddings.py)
+    and cached instead of recomputed from raw audio on the fly.
+    """
+
+    def __init__(self, txt_file_path, embeddings_path, org_max=10.0, org_min=0.0):
+        super().__init__()
+        df = pd.read_csv(txt_file_path)
+        self.org_mid = (org_max + org_min) / 2
+        self.norm_denom = 5.0
+        bins = [-1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        labels = [f"{i}-{i+1}" for i in range(0, 10)]
+        df["rating_category"] = pd.cut(df["average_score"], bins=bins, labels=labels)
+        df["num_class"] = df.groupby("rating_category", observed=False)["rating_category"].transform("count")
+        self.df = df
+        self.embeddings = _load_embedding_lookup(embeddings_path)
+        missing = set(df["wav_file_name"]) - set(self.embeddings)
+        if missing:
+            raise KeyError(
+                f"{len(missing)} wav_file_name(s) in {txt_file_path} have no cached embedding "
+                f"in {embeddings_path} (e.g. {sorted(missing)[:3]})"
+            )
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        r = self.df.iloc[idx]
+        mos = float(r["average_score"])
+        return dict(
+            embedding = self.embeddings[r["wav_file_name"]],
+            score     = (mos - self.org_mid) / self.norm_denom,
+            num_class = int(r["num_class"]),
+            wav_path  = r["wav_file_name"],
+        )
+
+    def collate_fn(self, batch):
+        embeddings = torch.tensor(np.stack([b["embedding"] for b in batch]), dtype=torch.float)
+        mos_score = torch.tensor([b["score"] for b in batch], dtype=torch.float)
+        num_class = torch.tensor([b["num_class"] for b in batch], dtype=torch.long)
+        return dict(
+            embedding = embeddings,
+            scores    = mos_score,
+            num_class = num_class,
+            wav_paths = [b["wav_path"] for b in batch],
+        )
+
+
+class XACLECachedEmbeddingINFDataset(Dataset):
+    """Inference counterpart of XACLECachedEmbeddingDataset (no score/num_class)."""
+
+    def __init__(self, txt_file_path, embeddings_path):
+        super().__init__()
+        self.df = pd.read_csv(txt_file_path)
+        self.embeddings = _load_embedding_lookup(embeddings_path)
+        missing = set(self.df["wav_file_name"]) - set(self.embeddings)
+        if missing:
+            raise KeyError(
+                f"{len(missing)} wav_file_name(s) in {txt_file_path} have no cached embedding "
+                f"in {embeddings_path} (e.g. {sorted(missing)[:3]})"
+            )
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        r = self.df.iloc[idx]
+        return dict(embedding=self.embeddings[r["wav_file_name"]], wav_path=r["wav_file_name"])
+
+    def collate_fn(self, batch):
+        embeddings = torch.tensor(np.stack([b["embedding"] for b in batch]), dtype=torch.float)
+        return dict(
+            embedding = embeddings,
+            wav_paths = [b["wav_path"] for b in batch],
         )

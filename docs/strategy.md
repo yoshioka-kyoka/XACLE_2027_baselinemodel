@@ -77,7 +77,38 @@ backboneが固まった後に重ねる。
 1. [評価者ばらつき案](https://github.com/kmsysgi/tech-XACLE-2027/blob/main/docs/idea/XACLE2027_listener_variability_strategy.md): 11クラス分布ヘッド+評価者内ランキング補助損失。backbone非依存で安価。
 2. [CSB案](https://github.com/kmsysgi/tech-XACLE-2027/blob/main/docs/idea/XACLE2027_CSB_architecture_implementation.md): 同一text×異generatorのpreference loss、generator-adversarial、latent swap。一番複雑。核(ペアワイズpreference)は既存`ContrastiveLoss`の拡張として実装できる。
 
-## 6. 残っているTODO/確認事項
+## 6. Stage 0 / Stage 1 実施結果 (2026-10-30)
+
+### Stage 0: LOSO評価ハーネス
+
+`scripts/make_loso_splits.py` / `scripts/run_loso_sweep.py` を実装（既存の`train.py`/`inference.py`/`evaluate.py`は無変更、`inference.py`に`train`split選択肢を1行追加したのみ）。M2D-CLAP baselineでのLOSO(Leave-One-Synthesizer-Out)中間結果:
+
+| 除外generator | SRCC (heldout) | N |
+|---|---:|---:|
+| audiogen | 0.5641 | 750 |
+| audioldm | 0.5240 | 500 |
+| audioldm2 | 0.6327 | 500 |
+| make-an-audio2 | 0.4781 | 750 |
+| (残り4世代は実行中) | | |
+
+official validation SRCC(0.5844)と同程度〜上回るものもあれば、make-an-audio2のように明確に下回るものもある。generatorによって汎化の崩れ方が異なることが分かった。全8世代完了後に平均・最悪ケースをまとめる。
+
+### Stage 1: encoder差し替えの汎用化 + Qwen2.5-Omni-3B 初回結果
+
+`models/xacle_baseline_model.py`に`encoder_type`("m2d_clap" / "cached_embedding")を導入し、Projector/ScorePredictor/Loss/チェックポイント形式/train.py・inference.py・evaluate.pyのCLIは完全に維持したまま、encoderだけを差し替えられるようにした(`utils/config.py`, `datasets/xacle_baseline_dataset.py`に`XACLECachedEmbeddingDataset`追加)。
+
+`scripts/extract_qwen_omni_embeddings.py`でQwen2.5-Omni-3Bのthinker(talker/code2wavはロードしない)に音声+キャプションを同一promptで入れ、最終層隠れ状態をattention_maskで平均プーリングして2048次元の固定長embeddingを事前計算(train/validation/test全件、`embeddings/qwen2.5-omni-3b/`)。`configs/train_qwen2_5_omni_3b.json`で同じProjector/ScorePredictor/Lossを学習。
+
+| Model | Val SRCC | Val LCC | Val KTAU | Val MSE | Test SRCC | Test LCC | Test KTAU | Test MSE |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| M2D-CLAP baseline | 0.5844 | 0.5995 | 0.4186 | 3.6368 | 0.5648 | 0.6142 | 0.3997 | 3.1847 |
+| Qwen2.5-Omni-3B (joint prompt, mean pool, 同一head) | 0.4937 | 0.4870 | 0.3477 | 4.4430 | 0.4634 | 0.4807 | 0.3225 | 4.1656 |
+
+**結果**: Qwen2.5-Omni-3Bは現時点でM2D-CLAPに約0.09〜0.10 SRCC劣る。一方、eda004/5の「入口の埋め込み(pooling)平均同士の単純比較はほぼ無相関(|SRCC|<0.07)」という結果よりは明確に強い信号が出ており、「意味的に揃うのはLLM内部」という仮説自体は支持される。ただし、CLAP型の対比学習で専用に訓練されたM2D-CLAPには、同一の単純なhead構成ではまだ届いていない。
+
+**未検証の改善余地**(優先度未確定): 平均プーリングでなく最終トークンのみを使う、promptの言い回し、normalize_embeddingsをtrueにする、より大きいQwen3-Omni-30B-A3Bへのスケール、M2D-CLAPとの特徴融合(Stage 2)。
+
+## 7. 残っているTODO/確認事項
 
 - [ ] **Ryo Moritaさんにeda006-010の結論を確認する**(未マージブランチ`eda/qwen-audio-zeroshot`。隠れ状態cos-sim／LLM-judge／PMI／describe-then-score。「同一prompt→隠れ状態」方式の確信度に直結。出力が`.gitignore`対象で本人に聞く以外に結論を知る手段がない)。
 - [ ] 複数frozenエンコーダの特徴融合(Stage 2)をルール上問題ないか、本格化する前に主催者へ確認するか検討する。
